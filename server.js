@@ -8,62 +8,62 @@ app.use(cors());
 app.use(express.json());
 
 // 1. Inicialización del cliente de Supabase
-// Usamos las variables de entorno. Nota: si estás usando las NEXT_PUBLIC_, puedes adaptarlas aquí.
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-// Se recomienda usar la Service Role Key para el backend para tener permisos completos, 
-// o la Anon Key si las políticas de RLS permiten inserciones públicas.
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error("Faltan las variables de entorno de Supabase (URL o Key)");
+  console.error("[LOG-INIT] Faltan las variables de entorno de Supabase (URL o Key)");
   process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+console.log("[LOG-INIT] Cliente de Supabase inicializado correctamente.");
 
-// Token de verificación para el Webhook de WhatsApp (Configúralo en tu .env y en el panel de Meta)
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 // 2. Rutas del Webhook de WhatsApp
 
 // A. Verificación del Webhook (GET)
-// Meta enviará una petición GET a esta ruta para verificar el webhook cuando lo configures.
 app.get('/webhook', (req, res) => {
+  console.log('\n[LOG-PASO 1] ---> GET /webhook (Verificación de Meta)');
+  console.log('[LOG-PASO 1] Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('[LOG-PASO 1] Query Params:', JSON.stringify(req.query, null, 2));
+
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('WEBHOOK_VERIFICADO');
+    console.log('[LOG-PASO 1] WEBHOOK_VERIFICADO exitosamente.');
     res.status(200).send(challenge);
   } else {
-    console.log('Fallo la verificación del webhook. Token incorrecto.');
+    console.log('[LOG-PASO 1] Falló la verificación del webhook. Token incorrecto o mode inválido.');
     res.sendStatus(403);
   }
 });
 
 // B. Recepción de mensajes (POST)
-// WhatsApp enviará eventos a esta ruta cuando recibas un mensaje.
 app.post('/webhook', async (req, res) => {
+  console.log('\n[LOG-PASO 2] ---> POST /webhook (Mensaje entrante de Meta)');
+  console.log('[LOG-PASO 2] Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('[LOG-PASO 2] Body recibido:', JSON.stringify(req.body, null, 2));
+
   const body = req.body;
 
-  // Verificar si es un evento de la API de WhatsApp
   if (body.object === 'whatsapp_business_account') {
     try {
-      // Recorremos las entradas para buscar mensajes (pueden venir en lotes)
       for (const entry of body.entry) {
         const changes = entry.changes[0].value;
         
         if (changes && changes.messages && changes.messages[0]) {
           const message = changes.messages[0];
-          
-          // Extraemos los datos necesarios
-          const phoneNumber = message.from; // Número de teléfono del usuario que envió el mensaje
+          const phoneNumber = message.from; 
           const messageContent = message.text ? message.text.body : 'Mensaje no textual (imagen, audio, etc.)';
           
-          console.log(`Mensaje recibido de ${phoneNumber}: ${messageContent}`);
+          console.log(`[LOG-PASO 2] Procesando mensaje de ${phoneNumber}: ${messageContent}`);
 
           // 3. Guardar el mensaje en Supabase
+          console.log(`[LOG-SUPABASE] Guardando mensaje entrante de WhatsApp en la BD...`);
           const { data, error } = await supabase
             .from('messages')
             .insert([
@@ -75,27 +75,31 @@ app.post('/webhook', async (req, res) => {
             ]);
 
           if (error) {
-            console.error('Error al guardar en Supabase:', error);
+            console.error('[LOG-SUPABASE] Error al guardar en Supabase:', error);
           } else {
-            console.log('Mensaje guardado correctamente en Supabase.');
+            console.log('[LOG-SUPABASE] Mensaje guardado correctamente en Supabase. Respuesta:', JSON.stringify(data));
           }
+        } else {
+          console.log('[LOG-PASO 2] Evento de webhook recibido pero no contiene mensajes de texto. Puede ser un cambio de estado (enviado, entregado, leído).');
         }
       }
-      // Responder siempre con 200 OK a Meta para confirmar recepción, 
-      // sino Meta reintentará enviar el evento muchas veces.
       res.sendStatus(200);
     } catch (error) {
-      console.error('Error procesando el webhook:', error);
+      console.error('[LOG-PASO 2] Error en el bloque try/catch procesando el webhook:', error);
       res.sendStatus(500);
     }
   } else {
-    // Retornar 404 si el evento no es de WhatsApp API
+    console.log('[LOG-PASO 2] El evento no pertenece a whatsapp_business_account. Ignorando.');
     res.sendStatus(404);
   }
 });
 
 // 3. Función para enviar mensajes a WhatsApp usando la API de Meta
 async function sendMessageToWhatsApp(phoneNumber, content) {
+  console.log('\n[LOG-META] ---> Iniciando envío de mensaje a Meta API');
+  console.log(`[LOG-META] Destinatario: ${phoneNumber}`);
+  console.log(`[LOG-META] Contenido: "${content}"`);
+
   const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
   const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
 
@@ -112,29 +116,45 @@ async function sendMessageToWhatsApp(phoneNumber, content) {
     text: { body: content }
   };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload)
-  });
+  console.log(`[LOG-META] Endpoint URL: ${url}`);
+  console.log(`[LOG-META] Payload que se enviará:`, JSON.stringify(payload, null, 2));
 
-  const data = await response.json();
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload)
+    });
 
-  if (!response.ok) {
-    throw new Error(`Error de Meta API: ${JSON.stringify(data)}`);
+    const data = await response.json();
+    console.log(`[LOG-META] Respuesta bruta de Meta (Status: ${response.status}):`, JSON.stringify(data, null, 2));
+
+    if (!response.ok) {
+      console.error(`[LOG-META] Meta devolvió un error:`, JSON.stringify(data));
+      throw new Error(`Error de Meta API: ${JSON.stringify(data)}`);
+    }
+
+    console.log('[LOG-META] Mensaje enviado exitosamente a través de Meta.');
+    return data;
+  } catch (error) {
+    console.error('[LOG-META] Excepción al comunicarse con la API de Meta:', error);
+    throw error; // Re-lanzamos para que lo capture el endpoint /api/send
   }
-
-  return data;
 }
 
 // 4. Endpoint para enviar mensajes desde la web (POST /api/send)
 app.post('/api/send', async (req, res) => {
+  console.log('\n[LOG-PASO 3] ---> POST /api/send (Petición desde el chat web)');
+  console.log('[LOG-PASO 3] Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('[LOG-PASO 3] Body recibido:', JSON.stringify(req.body, null, 2));
+
   const { phone_number, content } = req.body;
 
   if (!phone_number || !content) {
+    console.error('[LOG-PASO 3] Error: Faltan phone_number o content en el body');
     return res.status(400).json({ error: 'Faltan phone_number o content en el cuerpo de la petición' });
   }
 
@@ -143,7 +163,8 @@ app.post('/api/send', async (req, res) => {
     await sendMessageToWhatsApp(phone_number, content);
 
     // 2. Si es exitoso, guardar en Supabase como sender: 'web'
-    const { error: dbError } = await supabase
+    console.log(`[LOG-SUPABASE] Guardando el mensaje enviado desde la web en la BD...`);
+    const { error: dbError, data: dbData } = await supabase
       .from('messages')
       .insert([
         {
@@ -154,13 +175,15 @@ app.post('/api/send', async (req, res) => {
       ]);
 
     if (dbError) {
-      console.error('Error al guardar el mensaje enviado en Supabase:', dbError);
-      return res.status(500).json({ error: 'Mensaje enviado, pero falló el registro en base de datos.' });
+      console.error('[LOG-SUPABASE] Error al guardar el mensaje enviado en Supabase:', dbError);
+      return res.status(500).json({ error: 'Mensaje enviado a Meta, pero falló el registro en base de datos.', details: dbError });
     }
 
+    console.log('[LOG-SUPABASE] Mensaje web guardado correctamente en la BD. Respuesta:', JSON.stringify(dbData));
     res.status(200).json({ success: true, message: 'Mensaje enviado y guardado correctamente' });
+
   } catch (error) {
-    console.error('Error en /api/send:', error);
+    console.error('[LOG-PASO 3] Error capturado en el try/catch de /api/send:', error);
     res.status(500).json({ error: error.message || 'Error interno al enviar el mensaje' });
   }
 });
@@ -168,5 +191,5 @@ app.post('/api/send', async (req, res) => {
 // Iniciar el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Servidor backend escuchando en el puerto ${PORT}`);
+  console.log(`\n[LOG-INIT] Servidor backend escuchando en el puerto ${PORT}`);
 });
