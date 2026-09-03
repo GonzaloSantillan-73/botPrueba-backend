@@ -44,9 +44,14 @@ app.get('/webhook', (req, res) => {
 
 // B. Recepción de mensajes (POST)
 app.post('/webhook', async (req, res) => {
+  console.log('[LOG-WEBHOOK ENTRANTE] BODY:', JSON.stringify(req.body, null, 2));
+  
+  // Responder siempre con 200 OK a Meta inmediatamente para confirmar recepción
+  // y evitar que Meta reintente el envío del evento.
+  res.sendStatus(200);
+
   console.log('\n[LOG-PASO 2] ---> POST /webhook (Mensaje entrante de Meta)');
   console.log('[LOG-PASO 2] Headers:', JSON.stringify(req.headers, null, 2));
-  console.log('[LOG-PASO 2] Body recibido:', JSON.stringify(req.body, null, 2));
 
   const body = req.body;
 
@@ -83,14 +88,11 @@ app.post('/webhook', async (req, res) => {
           console.log('[LOG-PASO 2] Evento de webhook recibido pero no contiene mensajes de texto. Puede ser un cambio de estado (enviado, entregado, leído).');
         }
       }
-      res.sendStatus(200);
     } catch (error) {
       console.error('[LOG-PASO 2] Error en el bloque try/catch procesando el webhook:', error);
-      res.sendStatus(500);
     }
   } else {
     console.log('[LOG-PASO 2] El evento no pertenece a whatsapp_business_account. Ignorando.');
-    res.sendStatus(404);
   }
 });
 
